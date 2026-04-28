@@ -1,4 +1,11 @@
 {
+  "name": "sim-waf-ids",
+  "version": "2.0.0",
+  "description": "S.I.M. - Sistema de Inteligencia e Monitoramento | Motor WAF/IDS com painel forense",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1"

@@ -53,7 +53,8 @@ app.use((req, res, next) => {
     }
 
     const referer = req.get('Referer') || '';
-    const payloadCompleto = `${urlAcessada} ${corpoDaRequisicao} ${userAgent} ${referer}`;
+    const refererLimpo = referer.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?/i, '');
+    const payloadCompleto = `${urlAcessada} ${corpoDaRequisicao} ${userAgent} ${refererLimpo}`;
 
     const assinaturas = [
         { regex: /(UNION\s+(ALL\s+)?SELECT|SELECT\s+.*FROM|INSERT\s+INTO|DROP\s+TABLE|DELETE\s+FROM|UPDATE\s+.*SET|--|1=1|'(\s)*(OR|AND))/i, tipo: "SQL Injection (SQLi)", gravidade: "CRITICA", mitre: "T1190" },

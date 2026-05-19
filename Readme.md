@@ -49,4 +49,31 @@ O painel frontal faz *polling* automático (pedidos em segundo plano) à rota `/
 1. Abra o terminal (linha de comandos) e navegue até à pasta raiz do projeto.
 2. Instale as dependências necessárias (Express e CORS) executando o comando:
    ```bash
-   npm install express cors
+   npm install express cors   ```
+3. Inicie o servidor:
+   ```bash
+   npm start
+   ```
+4. Acesse `http://localhost:3000` no navegador.
+
+## 6. Funcionalidades da Sprint 3
+
+A Sprint 3 ("Persistência, Inteligência e Bloqueio Ativo") agregou três
+módulos ao sistema:
+
+### 6.1. Persistência Forense em Disco
+Os logs deixaram de ser voláteis. As evidências são gravadas em
+`data/forensic_logs.json` e recarregadas automaticamente quando o servidor
+reinicia, garantindo a cadeia de custódia das evidências. Inclui também o
+endpoint `GET /api/health` para monitoramento de disponibilidade e uptime.
+
+### 6.2. Blocklist Automática de IPs
+IPs que acumulam 5 ou mais incidentes são adicionados a uma blocklist e
+passam a ser barrados preventivamente por 5 minutos, antes mesmo da análise
+de payload. A lista pode ser consultada via `GET /api/forensic/blocklist` e
+um IP pode ser liberado manualmente via `DELETE /api/forensic/blocklist/:ip`.
+
+### 6.3. Painel de Inteligência
+Nova seção no frontend que apresenta a distribuição de ataques por tipo
+(gráfico de barras) e o ranking dos cinco IPs mais ofensores, consumindo
+dados agregados do endpoint `GET /api/forensic/stats`.

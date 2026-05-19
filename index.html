@@ -449,6 +449,13 @@
             left: 0;
             right: 0;
         }
+        /* [Anthony] Painel de Inteligencia - grafico de barras horizontais */
+        .intel-chart { display: flex; flex-direction: column; gap: 12px; }
+        .intel-bar-row { display: flex; align-items: center; gap: 12px; font-size: 0.8rem; }
+        .intel-bar-label { flex: 0 0 200px; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .intel-bar-track { flex: 1; background: var(--bg-base); border: 1px solid var(--border-color); border-radius: 4px; height: 22px; position: relative; overflow: hidden; }
+        .intel-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent-blue), #0ea5e9); border-radius: 3px; transition: width 0.4s ease; min-width: 2px; }
+        .intel-bar-value { flex: 0 0 40px; text-align: right; font-weight: 700; color: #f8fafc; }
     </style>
 </head>
 <body>
@@ -582,6 +589,43 @@
             </div>
 
         </div>
+
+        <!-- ========================================================= -->
+        <!-- [Anthony Guilherme Cazuni da Silva] Painel de Inteligencia -->
+        <!-- Visao analitica: distribuicao de ataques por tipo e        -->
+        <!-- ranking dos IPs mais ofensores.                            -->
+        <!-- ========================================================= -->
+        <div class="row g-4 mt-1">
+            <div class="col-lg-7">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span>Inteligencia &mdash; Ataques por Tipo</span>
+                    </div>
+                    <div class="panel-body">
+                        <div id="graficoTipos" class="intel-chart">
+                            <div class="text-muted" style="font-size:0.8rem;">Sem dados suficientes para analise.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span>Inteligencia &mdash; Top IPs Ofensores</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="table" style="margin-bottom:0;">
+                            <thead>
+                                <tr><th>#</th><th>IP de Origem</th><th>Incidentes</th></tr>
+                            </thead>
+                            <tbody id="tabelaTopIps">
+                                <tr><td colspan="3" class="text-center text-muted py-4" style="border-bottom:none;">Aguardando dados...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="footer-bar">
@@ -633,7 +677,44 @@
                 document.getElementById('statMedias').textContent = stats.medias;
                 document.getElementById('statIps').textContent = stats.ipsUnicos;
                 document.getElementById('footerCount').textContent = `${stats.total} registros`;
+                renderizarInteligencia(stats);
             } catch (e) {}
+        }
+
+        // [Anthony Guilherme Cazuni da Silva] Renderiza grafico de
+        // ataques por tipo e ranking de IPs ofensores.
+        function renderizarInteligencia(stats) {
+            const grafico = document.getElementById('graficoTipos');
+            const porTipo = stats.porTipo || {};
+            const entradas = Object.entries(porTipo).sort((a, b) => b[1] - a[1]);
+
+            if (entradas.length === 0) {
+                grafico.innerHTML = '<div class="text-muted" style="font-size:0.8rem;">Sem dados suficientes para analise.</div>';
+            } else {
+                const maxValor = Math.max(...entradas.map(e => e[1]));
+                grafico.innerHTML = entradas.map(([tipo, qtd]) => {
+                    const pct = Math.round((qtd / maxValor) * 100);
+                    return `
+                        <div class="intel-bar-row">
+                            <div class="intel-bar-label" title="${escapeHTML(tipo)}">${escapeHTML(tipo)}</div>
+                            <div class="intel-bar-track"><div class="intel-bar-fill" style="width:${pct}%"></div></div>
+                            <div class="intel-bar-value">${qtd}</div>
+                        </div>`;
+                }).join('');
+            }
+
+            const tbody = document.getElementById('tabelaTopIps');
+            const topIps = stats.topIps || [];
+            if (topIps.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4" style="border-bottom:none;">Nenhum IP ofensor registrado.</td></tr>';
+            } else {
+                tbody.innerHTML = topIps.map((item, i) => `
+                    <tr>
+                        <td class="data-mono">${i + 1}</td>
+                        <td class="data-mono ip-address">${escapeHTML(item.ip)}</td>
+                        <td><span class="severity-badge sev-alta">${item.qtd}</span></td>
+                    </tr>`).join('');
+            }
         }
 
         async function carregarLogs() {

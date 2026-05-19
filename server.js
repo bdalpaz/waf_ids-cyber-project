@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const port = 3000;
@@ -8,11 +9,110 @@ const port = 3000;
 app.use(express.json());
 app.use(cors());
 
+// ============================================================
+// [Alice Botton Dal Paz] Persistencia de logs forenses em disco
+// Garante que as evidencias nao sejam perdidas ao reiniciar o
+// servidor. Os logs sao gravados em data/forensic_logs.json.
+// ============================================================
+const DATA_DIR = path.join(__dirname, 'data');
+const LOG_FILE = path.join(DATA_DIR, 'forensic_logs.json');
+const horaInicializacao = Date.now();
+
 let logsForenses = [];
+
+function garantirDiretorioDados() {
+    try {
+        if (!fs.existsSync(DATA_DIR)) {
+            fs.mkdirSync(DATA_DIR, { recursive: true });
+        }
+    } catch (e) {
+        console.error('[!] Nao foi possivel criar o diretorio de dados:', e.message);
+    }
+}
+
+function carregarLogsDoDisco() {
+    try {
+        if (fs.existsSync(LOG_FILE)) {
+            const conteudo = fs.readFileSync(LOG_FILE, 'utf-8');
+            const dados = JSON.parse(conteudo);
+            if (Array.isArray(dados)) {
+                logsForenses = dados;
+                console.log(`[+] ${logsForenses.length} registros forenses recuperados do disco.`);
+            }
+        }
+    } catch (e) {
+        console.error('[!] Falha ao carregar logs persistidos:', e.message);
+        logsForenses = [];
+    }
+}
+
+let gravacaoAgendada = false;
+function persistirLogs() {
+    // Agrupa multiplas gravacoes em uma so para nao bloquear o event loop
+    if (gravacaoAgendada) return;
+    gravacaoAgendada = true;
+    setTimeout(() => {
+        gravacaoAgendada = false;
+        try {
+            fs.writeFileSync(LOG_FILE, JSON.stringify(logsForenses), 'utf-8');
+        } catch (e) {
+            console.error('[!] Falha ao persistir logs em disco:', e.message);
+        }
+    }, 1000);
+}
+
+garantirDiretorioDados();
+carregarLogsDoDisco();
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW = 10000;
 const RATE_LIMIT_MAX = 20;
+
+// ============================================================
+// [Gabriel Henrique Robette Ferri] Blocklist automatica de IPs
+// Um IP que acumula muitos incidentes graves passa a ser
+// bloqueado preventivamente, antes mesmo da analise de payload.
+// ============================================================
+const contagemIncidentesPorIp = new Map();
+const ipsBloqueados = new Map(); // ip -> { motivo, desde, expira }
+const LIMITE_INCIDENTES_BLOCKLIST = 5;
+const DURACAO_BLOCKLIST = 5 * 60 * 1000; // 5 minutos
+
+function registrarIncidenteIp(ip) {
+    const atual = contagemIncidentesPorIp.get(ip) || 0;
+    const novoTotal = atual + 1;
+    contagemIncidentesPorIp.set(ip, novoTotal);
+
+    if (novoTotal >= LIMITE_INCIDENTES_BLOCKLIST && !ipsBloqueados.has(ip)) {
+        ipsBloqueados.set(ip, {
+            motivo: `Reincidencia: ${novoTotal} incidentes detectados`,
+            desde: new Date().toISOString(),
+            expira: Date.now() + DURACAO_BLOCKLIST
+        });
+        console.log(`[!] IP ${ip} adicionado a blocklist (${novoTotal} incidentes).`);
+    }
+}
+
+function ipEstaBloqueado(ip) {
+    const registro = ipsBloqueados.get(ip);
+    if (!registro) return false;
+    if (Date.now() > registro.expira) {
+        ipsBloqueados.delete(ip);
+        contagemIncidentesPorIp.delete(ip);
+        return false;
+    }
+    return true;
+}
+
+setInterval(() => {
+    const agora = Date.now();
+    for (const [ip, registro] of ipsBloqueados) {
+        if (agora > registro.expira) {
+            ipsBloqueados.delete(ip);
+            contagemIncidentesPorIp.delete(ip);
+        }
+    }
+}, 60000);
 
 function verificarRateLimit(ip) {
     const agora = Date.now();
@@ -41,6 +141,14 @@ app.use((req, res, next) => {
     const metodo = req.method;
     const userAgent = req.get('User-Agent') || 'Desconhecido';
     const dataHora = new Date().toISOString();
+
+    // [Bugfix Sprint 3] Rotas internas de monitoramento/forense nao
+    // passam pelo WAF, evitando que a equipe de seguranca seja
+    // bloqueada pela propria blocklist ao consultar o painel.
+    const rotasIsentas = ['/api/health', '/api/forensic/'];
+    if (rotasIsentas.some(rota => req.path.startsWith(rota)) || req.path === '/') {
+        return next();
+    }
 
     let urlAcessada = req.originalUrl;
     try {
@@ -71,7 +179,12 @@ app.use((req, res, next) => {
 
     let ameacaDetectada = null;
 
-    if (verificarRateLimit(ipOrigem)) {
+    // [Gabriel] IP ja na blocklist: barra imediatamente
+    if (ipEstaBloqueado(ipOrigem)) {
+        ameacaDetectada = { tipo: "IP na Blocklist (Reincidente)", gravidade: "CRITICA", mitre: "T1595" };
+    }
+
+    if (!ameacaDetectada && verificarRateLimit(ipOrigem)) {
         ameacaDetectada = { tipo: "Brute Force / Rate Limit Excedido", gravidade: "ALTA", mitre: "T1110" };
     }
 
@@ -103,6 +216,12 @@ app.use((req, res, next) => {
         if (logsForenses.length > 500) {
             logsForenses = logsForenses.slice(0, 500);
         }
+
+        // [Gabriel] contabiliza incidente para a blocklist automatica
+        registrarIncidenteIp(ipOrigem);
+
+        // [Alice] persiste os logs em disco
+        persistirLogs();
 
         return res.status(403).json({
             erro: "Acesso bloqueado por politica de seguranca.",
@@ -137,7 +256,18 @@ app.get('/api/forensic/stats', (req, res) => {
     const agora = Date.now();
     const ultimas24h = logsForenses.filter(l => (agora - new Date(l.timestamp).getTime()) < 86400000).length;
 
-    return res.json({ total, criticas, altas, medias, ipsUnicos, ultimas24h, porTipo });
+    // [Anthony Guilherme Cazuni da Silva] Ranking de IPs ofensores
+    // para alimentar o painel de inteligencia do frontend.
+    const contagemIp = {};
+    logsForenses.forEach(l => {
+        contagemIp[l.ip] = (contagemIp[l.ip] || 0) + 1;
+    });
+    const topIps = Object.entries(contagemIp)
+        .map(([ip, qtd]) => ({ ip, qtd }))
+        .sort((a, b) => b.qtd - a.qtd)
+        .slice(0, 5);
+
+    return res.json({ total, criticas, altas, medias, ipsUnicos, ultimas24h, porTipo, topIps });
 });
 
 app.get('/api/forensic/export', (req, res) => {
@@ -153,7 +283,53 @@ app.get('/api/forensic/export', (req, res) => {
 app.delete('/api/forensic/logs', (req, res) => {
     const total = logsForenses.length;
     logsForenses = [];
+    persistirLogs(); // [Alice] reflete a limpeza no disco
     return res.json({ mensagem: `${total} registros removidos.` });
+});
+
+// ============================================================
+// [Alice Botton Dal Paz] Health-check do servico
+// Permite monitorar disponibilidade, uptime e estado da
+// persistencia de logs.
+// ============================================================
+app.get('/api/health', (req, res) => {
+    const uptimeSegundos = Math.floor((Date.now() - horaInicializacao) / 1000);
+    return res.json({
+        status: 'online',
+        servico: 'S.I.M. WAF/IDS',
+        uptimeSegundos,
+        totalLogs: logsForenses.length,
+        persistenciaAtiva: fs.existsSync(DATA_DIR),
+        timestamp: new Date().toISOString()
+    });
+});
+
+// ============================================================
+// [Gabriel Henrique Robette Ferri] Gestao da blocklist
+// Consulta os IPs atualmente bloqueados e permite remover
+// manualmente um IP da lista (desbloqueio).
+// ============================================================
+app.get('/api/forensic/blocklist', (req, res) => {
+    const lista = [];
+    for (const [ip, registro] of ipsBloqueados) {
+        lista.push({
+            ip,
+            motivo: registro.motivo,
+            desde: registro.desde,
+            expiraEm: Math.max(0, Math.floor((registro.expira - Date.now()) / 1000))
+        });
+    }
+    return res.json({ total: lista.length, bloqueados: lista });
+});
+
+app.delete('/api/forensic/blocklist/:ip', (req, res) => {
+    const ip = req.params.ip;
+    if (ipsBloqueados.has(ip)) {
+        ipsBloqueados.delete(ip);
+        contagemIncidentesPorIp.delete(ip);
+        return res.json({ mensagem: `IP ${ip} removido da blocklist.` });
+    }
+    return res.status(404).json({ erro: `IP ${ip} nao esta na blocklist.` });
 });
 
 app.post('/api/auth', (req, res) => {
@@ -174,5 +350,7 @@ app.listen(port, () => {
     console.log(`[+] Motor WAF/IDS ativo na porta ${port}`);
     console.log(`[+] ${10} assinaturas de ameacas carregadas`);
     console.log(`[+] Rate Limiting: ${RATE_LIMIT_MAX} req/${RATE_LIMIT_WINDOW/1000}s por IP`);
+    console.log(`[+] Blocklist automatica: ${LIMITE_INCIDENTES_BLOCKLIST} incidentes -> bloqueio de ${DURACAO_BLOCKLIST/60000}min`);
+    console.log(`[+] Persistencia de logs: ${LOG_FILE}`);
     console.log(`[+] Acesse http://localhost:3000 para abrir o painel.`);
 });

@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs').promises;
 
 const app = express();
 const port = 3000;
@@ -10,9 +11,13 @@ app.use(express.json());
 app.use(cors());
 
 // ============================================================
-// [Alice Botton Dal Paz] Persistencia de logs forenses em disco
-// Garante que as evidencias nao sejam perdidas ao reiniciar o
-// servidor. Os logs sao gravados em data/forensic_logs.json.
+// [Alice Botton Dal Paz] Sprint 4
+// Persistencia forense em disco com gravacao ASSINCRONA.
+// Substitui o writeFileSync sincrono da Sprint 3 (que travava
+// o event loop sob carga alta) por fs.promises.writeFile com
+// serializacao por fila: enquanto uma gravacao esta em
+// andamento, novas requisicoes sao agrupadas e gravadas em
+// seguida, evitando race conditions no arquivo.
 // ============================================================
 const DATA_DIR = path.join(__dirname, 'data');
 const LOG_FILE = path.join(DATA_DIR, 'forensic_logs.json');
@@ -20,49 +25,63 @@ const horaInicializacao = Date.now();
 
 let logsForenses = [];
 
-function garantirDiretorioDados() {
+async function garantirDiretorioDados() {
     try {
-        if (!fs.existsSync(DATA_DIR)) {
-            fs.mkdirSync(DATA_DIR, { recursive: true });
-        }
+        await fsp.mkdir(DATA_DIR, { recursive: true });
     } catch (e) {
         console.error('[!] Nao foi possivel criar o diretorio de dados:', e.message);
     }
 }
 
-function carregarLogsDoDisco() {
+async function carregarLogsDoDisco() {
     try {
-        if (fs.existsSync(LOG_FILE)) {
-            const conteudo = fs.readFileSync(LOG_FILE, 'utf-8');
-            const dados = JSON.parse(conteudo);
-            if (Array.isArray(dados)) {
-                logsForenses = dados;
-                console.log(`[+] ${logsForenses.length} registros forenses recuperados do disco.`);
-            }
+        const conteudo = await fsp.readFile(LOG_FILE, 'utf-8');
+        const dados = JSON.parse(conteudo);
+        if (Array.isArray(dados)) {
+            logsForenses = dados;
+            console.log(`[+] ${logsForenses.length} registros forenses recuperados do disco.`);
         }
     } catch (e) {
-        console.error('[!] Falha ao carregar logs persistidos:', e.message);
+        // Arquivo inexistente no primeiro start nao e erro real
+        if (e.code !== 'ENOENT') {
+            console.error('[!] Falha ao carregar logs persistidos:', e.message);
+        }
         logsForenses = [];
     }
 }
 
-let gravacaoAgendada = false;
-function persistirLogs() {
-    // Agrupa multiplas gravacoes em uma so para nao bloquear o event loop
-    if (gravacaoAgendada) return;
-    gravacaoAgendada = true;
-    setTimeout(() => {
-        gravacaoAgendada = false;
-        try {
-            fs.writeFileSync(LOG_FILE, JSON.stringify(logsForenses), 'utf-8');
-        } catch (e) {
-            console.error('[!] Falha ao persistir logs em disco:', e.message);
-        }
-    }, 1000);
+// Estado da fila de gravacao assincrona
+let gravando = false;
+let novaGravacaoPendente = false;
+
+async function persistirLogs() {
+    // Se ja existe uma gravacao em andamento, apenas marca que
+    // outra precisa acontecer em seguida (coalesce). Evita
+    // gravar N vezes seguidas quando chegam N requisicoes juntas.
+    if (gravando) {
+        novaGravacaoPendente = true;
+        return;
+    }
+    gravando = true;
+    try {
+        do {
+            novaGravacaoPendente = false;
+            const snapshot = JSON.stringify(logsForenses);
+            // Gravacao realmente assincrona: nao bloqueia o event loop
+            await fsp.writeFile(LOG_FILE, snapshot, 'utf-8');
+        } while (novaGravacaoPendente);
+    } catch (e) {
+        console.error('[!] Falha ao persistir logs em disco:', e.message);
+    } finally {
+        gravando = false;
+    }
 }
 
-garantirDiretorioDados();
-carregarLogsDoDisco();
+// Inicializa persistencia antes de aceitar trafego
+(async () => {
+    await garantirDiretorioDados();
+    await carregarLogsDoDisco();
+})();
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW = 10000;
@@ -220,7 +239,7 @@ app.use((req, res, next) => {
         // [Gabriel] contabiliza incidente para a blocklist automatica
         registrarIncidenteIp(ipOrigem);
 
-        // [Alice] persiste os logs em disco
+        // [Alice] persiste os logs em disco (agora assincrono)
         persistirLogs();
 
         return res.status(403).json({
@@ -236,8 +255,63 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// ============================================================
+// [Gabriel Henrique Robette Ferri] Sprint 4
+// Paginacao + busca + filtro SERVER-SIDE em /api/forensic/logs
+//
+// Substitui o "retorna a lista inteira" da Sprint 3, que nao
+// escalava bem com centenas de logs. Mantida compatibilidade
+// retro: sem query params, devolve os mesmos campos antigos
+// (apenas o array de registros), para nao quebrar a UI atual.
+//
+// Query params suportados:
+//   ?page=N&pageSize=M    -> ativa modo paginado
+//   ?q=texto              -> busca em ameaca/ip/alvo/payload
+//   ?gravidade=CRITICA    -> filtra por gravidade
+// ============================================================
 app.get('/api/forensic/logs', (req, res) => {
-    return res.json(logsForenses);
+    const { page, pageSize, q, gravidade } = req.query;
+
+    // Modo legado: nenhum parametro -> devolve array bruto
+    // (compatibilidade com o frontend atual da Sprint 3)
+    if (!page && !pageSize && !q && !gravidade) {
+        return res.json(logsForenses);
+    }
+
+    let filtrados = logsForenses;
+
+    if (gravidade) {
+        const g = String(gravidade).toUpperCase();
+        filtrados = filtrados.filter(l => l.gravidade === g);
+    }
+
+    if (q) {
+        const termo = String(q).toLowerCase();
+        filtrados = filtrados.filter(l =>
+            (l.ameaca || '').toLowerCase().includes(termo) ||
+            (l.ip || '').toLowerCase().includes(termo) ||
+            (l.alvo || '').toLowerCase().includes(termo) ||
+            (l.payload || '').toLowerCase().includes(termo)
+        );
+    }
+
+    const totalFiltrado = filtrados.length;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const pageSizeNum = Math.min(100, Math.max(1, parseInt(pageSize, 10) || 20));
+    const inicio = (pageNum - 1) * pageSizeNum;
+    const registros = filtrados.slice(inicio, inicio + pageSizeNum);
+    const totalPaginas = Math.max(1, Math.ceil(totalFiltrado / pageSizeNum));
+
+    return res.json({
+        paginacao: {
+            page: pageNum,
+            pageSize: pageSizeNum,
+            totalRegistros: totalFiltrado,
+            totalPaginas
+        },
+        filtros: { q: q || null, gravidade: gravidade || null },
+        registros
+    });
 });
 
 app.get('/api/forensic/stats', (req, res) => {
@@ -270,7 +344,47 @@ app.get('/api/forensic/stats', (req, res) => {
     return res.json({ total, criticas, altas, medias, ipsUnicos, ultimas24h, porTipo, topIps });
 });
 
+// ============================================================
+// [Anthony Guilherme Cazuni da Silva] Sprint 4
+// Exportacao em CSV alem do JSON ja existente.
+// O perito pode abrir o relatorio direto no Excel/LibreOffice.
+//
+// Query params:
+//   ?formato=csv  -> exporta CSV (default continua JSON)
+// ============================================================
+function escaparCampoCsv(valor) {
+    if (valor === null || valor === undefined) return '';
+    const s = String(valor);
+    // RFC 4180: campo com aspas, virgula ou quebra de linha precisa
+    // ser envelopado em aspas, e aspas duplas viram aspas duplas duplas
+    if (/[",\r\n]/.test(s)) {
+        return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+}
+
+function logsParaCsv(logs) {
+    const colunas = ['id', 'timestamp', 'ip', 'metodo', 'alvo', 'ameaca', 'gravidade', 'mitre', 'userAgent', 'payload'];
+    const linhas = [colunas.join(',')];
+    for (const log of logs) {
+        const linha = colunas.map(c => escaparCampoCsv(log[c])).join(',');
+        linhas.push(linha);
+    }
+    // \r\n entre linhas conforme RFC 4180
+    return linhas.join('\r\n');
+}
+
 app.get('/api/forensic/export', (req, res) => {
+    const formato = String(req.query.formato || 'json').toLowerCase();
+
+    if (formato === 'csv') {
+        const csv = logsParaCsv(logsForenses);
+        res.setHeader('Content-Disposition', 'attachment; filename=sim_forensic_logs.csv');
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        // BOM UTF-8: faz o Excel abrir acentos corretamente
+        return res.send('\uFEFF' + csv);
+    }
+
     res.setHeader('Content-Disposition', 'attachment; filename=sim_forensic_logs.json');
     res.setHeader('Content-Type', 'application/json');
     return res.json({
@@ -351,6 +465,6 @@ app.listen(port, () => {
     console.log(`[+] ${10} assinaturas de ameacas carregadas`);
     console.log(`[+] Rate Limiting: ${RATE_LIMIT_MAX} req/${RATE_LIMIT_WINDOW/1000}s por IP`);
     console.log(`[+] Blocklist automatica: ${LIMITE_INCIDENTES_BLOCKLIST} incidentes -> bloqueio de ${DURACAO_BLOCKLIST/60000}min`);
-    console.log(`[+] Persistencia de logs: ${LOG_FILE}`);
+    console.log(`[+] Persistencia de logs (assincrona): ${LOG_FILE}`);
     console.log(`[+] Acesse http://localhost:3000 para abrir o painel.`);
 });

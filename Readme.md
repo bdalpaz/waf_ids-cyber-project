@@ -77,3 +77,93 @@ um IP pode ser liberado manualmente via `DELETE /api/forensic/blocklist/:ip`.
 Nova seção no frontend que apresenta a distribuição de ataques por tipo
 (gráfico de barras) e o ranking dos cinco IPs mais ofensores, consumindo
 dados agregados do endpoint `GET /api/forensic/stats`.
+
+## 7. Funcionalidades da Sprint 4
+
+A Sprint 4 ("Endurecimento, Testes e Pagamento de Débito Técnico")
+focou em eliminar os débitos técnicos da Sprint 3 e em aumentar a
+robustez do motor WAF/IDS, com base nos indicadores da sprint anterior
+(taxa de retrabalho de 33%, bug crítico de blocklist descoberto tarde).
+
+### 7.1. Persistência Assíncrona (Alice)
+A gravação dos logs forenses migrou de `fs.writeFileSync` (síncrono,
+bloqueava o event loop sob carga) para `fs.promises.writeFile`.
+A implementação usa uma fila com *coalesce*: enquanto uma gravação
+está em andamento, gravações subsequentes são agrupadas, evitando
+*race conditions* sobre o arquivo `data/forensic_logs.json`. Esse
+item paga o débito técnico registrado na retrospectiva da Sprint 3.
+
+### 7.2. Paginação e Busca Server-Side (Gabriel)
+A rota `GET /api/forensic/logs` ganhou parâmetros de query:
+
+| Parâmetro | Efeito |
+| :--- | :--- |
+| `page=N` | Página solicitada (1-indexada) |
+| `pageSize=M` | Tamanho da página (1–100, default 20) |
+| `q=texto` | Busca em `ameaca`, `ip`, `alvo` e `payload` |
+| `gravidade=CRITICA` | Filtra por nível de severidade |
+
+Quando nenhum parâmetro é passado, a rota mantém o comportamento
+antigo (array bruto), garantindo compatibilidade retroativa com o
+frontend da Sprint 3.
+
+### 7.3. Exportação em CSV (Anthony)
+A rota `GET /api/forensic/export?formato=csv` exporta os logs em
+formato CSV (RFC 4180), com cabeçalho UTF-8 (BOM) para abrir
+corretamente no Excel e LibreOffice. O painel ganhou um botão
+"Exportar CSV" ao lado do já existente "Exportar JSON".
+
+### 7.4. Suíte de Testes de Integração (Gabriel)
+O diretório `tests/` passa a conter o script `integration_tests.sh`,
+que valida ponta a ponta:
+
+* rotas internas (`/api/health`, `/api/forensic/*`) continuam acessíveis;
+* detecção de SQLi, XSS, LFI e RCE retorna HTTP 403;
+* requisição legítima continua respondendo 200;
+* persistência grava no disco;
+* paginação, busca e filtro server-side respondem corretamente;
+* blocklist é acionada após reincidência e **não** bloqueia o painel;
+* exportação em CSV e JSON funcionam.
+
+Para executar:
+
+```bash
+# Terminal 1
+npm start
+
+# Terminal 2
+bash tests/integration_tests.sh
+```
+
+O script deve ser rodado antes de cada `merge` (ação combinada na
+retrospectiva).
+
+## 8. Definition of Done (DoD)
+
+Critério comum acordado pela equipe para considerar uma tarefa
+encerrada. Vale para qualquer feature, *bugfix* ou refatoração.
+
+Uma tarefa só pode ser marcada como "concluída" quando **todos** os
+itens abaixo são verdadeiros:
+
+1. **Funcionalidade implementada** conforme o item priorizado no
+   *planning*.
+2. **Testada manualmente** com `curl` cobrindo o caminho feliz e ao
+   menos um caso de erro.
+3. **Integrada no script `tests/integration_tests.sh`**, e o script
+   completo passa sem falhas (`exit 0`).
+4. **Sem regressão**: as rotas internas (`/api/health`, painel
+   forense) continuam acessíveis mesmo com a feature ativa.
+5. **Sem débito técnico oculto**: se algo ficou aquém do ideal
+   (por exemplo, uma gravação síncrona), isso é registrado
+   explicitamente na retrospectiva, e não escondido no código.
+6. **Comentada no código** com tag do responsável (`[Nome]`) e
+   referência à sprint, para preservar a rastreabilidade.
+7. **Documentada no README** (esta seção 7 ou a 8) quando expõe
+   API/endpoint novo, parâmetro novo ou comando novo.
+8. **Code review informal** feito por outro membro do trio antes do
+   `merge` na `main`.
+
+Esse DoD foi criado em resposta à causa-raiz identificada na
+retrospectiva da Sprint 3: "cada desenvolvedor encerrava a tarefa com
+critérios diferentes de qualidade".

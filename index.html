@@ -544,8 +544,12 @@
 
                         <hr style="border-color: var(--border-color); margin: 1.25rem 0;">
 
-                        <div class="d-flex gap-2">
+                        <!-- [Anthony - Sprint 4] Exportacao em CSV alem do JSON -->
+                        <div class="d-flex gap-2 mb-2">
                             <button class="btn-sm-custom flex-fill" onclick="exportarLogs()">Exportar JSON</button>
+                            <button class="btn-sm-custom flex-fill" onclick="exportarLogsCSV()">Exportar CSV</button>
+                        </div>
+                        <div class="d-flex gap-2">
                             <button class="btn-danger-outline flex-fill" onclick="limparLogs()">Limpar Logs</button>
                         </div>
                     </div>
@@ -893,6 +897,11 @@
 
         function exportarLogs() {
             window.open('/api/forensic/export', '_blank');
+        }
+
+        // [Anthony - Sprint 4] Exporta os logs em CSV (abre no Excel/Calc).
+        function exportarLogsCSV() {
+            window.open('/api/forensic/export?formato=csv', '_blank');
         }
 
         async function limparLogs() {
